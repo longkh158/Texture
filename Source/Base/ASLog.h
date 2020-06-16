@@ -14,7 +14,7 @@
 #import <os/activity.h>
 
 #ifndef ASEnableVerboseLogging
-  #define ASEnableVerboseLogging 0
+  #define ASEnableVerboseLogging 1
 #endif
 
 /**

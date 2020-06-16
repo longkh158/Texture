@@ -1663,6 +1663,14 @@ static NSString * const kCellReuseIdentifier = @"_ASTableViewCell";
   [changeSet executeCompletionHandlerWithFinished:YES];
 }
 
+#if ZA_ENABLE_MAINTAIN_RANGE
+- (void)rangeController:(ASRangeController *)rangeController updateMaintainRangeWithEnterElements:(NSHashTable<ASCollectionElement *> *)enterElements exitElements:(NSHashTable<ASCollectionElement *> *)exitElements {
+  if ([_dataController respondsToSelector:@selector(updateMaintainStateForEnterElements:exitElements:)]) {
+     [_dataController updateMaintainStateForEnterElements:enterElements exitElements:exitElements];
+  }
+}
+#endif
+
 #pragma mark - ASDataControllerSource
 
 - (BOOL)dataController:(ASDataController *)dataController shouldEagerlyLayoutNode:(ASCellNode *)node

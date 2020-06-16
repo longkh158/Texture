@@ -39,8 +39,26 @@
     _constrainedSize = constrainedSize;
     _owningNode = owningNode;
     _traitCollection = traitCollection;
+    _nodeDeallocated = NO;
   }
   return self;
+}
+
+#if ZA_ENABLE_MAINTAIN_RANGE
+- (void)deallocateNode
+{
+  std::lock_guard<std::mutex> l(_lock);
+  _node = nullptr;
+  _nodeDeallocated = YES;
+}
+#endif
+
+- (void)reacquireNodeBlockIfNeeded:(ASCellNodeBlock)nodeBlock
+{
+  NSAssert(nodeBlock != nil, @"Node block must not be nil");
+  std::lock_guard<std::mutex> l(_lock);
+  if (_nodeBlock) return;
+  _nodeBlock = nodeBlock;
 }
 
 - (ASCellNode *)node

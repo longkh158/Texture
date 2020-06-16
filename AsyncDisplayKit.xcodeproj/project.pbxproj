@@ -213,6 +213,8 @@
 		9F06E5CD1B4CAF4200F015D8 /* ASCollectionViewTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = 9F06E5CC1B4CAF4200F015D8 /* ASCollectionViewTests.mm */; };
 		9F98C0261DBE29E000476D92 /* ASControlTargetAction.mm in Sources */ = {isa = PBXBuildFile; fileRef = 9F98C0241DBDF2A300476D92 /* ASControlTargetAction.mm */; };
 		9F98C0271DBE29FC00476D92 /* ASControlTargetAction.h in Headers */ = {isa = PBXBuildFile; fileRef = 9F98C0231DBDF2A300476D92 /* ASControlTargetAction.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		A1657E9D24978045008099B1 /* ZAReallocOperation.m in Sources */ = {isa = PBXBuildFile; fileRef = A1657E9C24978045008099B1 /* ZAReallocOperation.m */; };
+		A1657E9E24978119008099B1 /* ZAReallocOperation.h in Headers */ = {isa = PBXBuildFile; fileRef = A1657E9924977CC6008099B1 /* ZAReallocOperation.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		A2763D7A1CBDD57D00A9ADBD /* ASPINRemoteImageDownloader.h in Headers */ = {isa = PBXBuildFile; fileRef = A2763D771CBDD57D00A9ADBD /* ASPINRemoteImageDownloader.h */; settings = {ATTRIBUTES = (Public, ); }; };
 		A37320101C571B740011FC94 /* ASTextNode+Beta.h in Headers */ = {isa = PBXBuildFile; fileRef = A373200E1C571B050011FC94 /* ASTextNode+Beta.h */; settings = {ATTRIBUTES = (Public, ); }; };
 		AC026B581BD3F61800BBC17E /* ASAbsoluteLayoutSpecSnapshotTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = AC026B571BD3F61800BBC17E /* ASAbsoluteLayoutSpecSnapshotTests.mm */; };
@@ -783,6 +785,8 @@
 		9F06E5CC1B4CAF4200F015D8 /* ASCollectionViewTests.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; lineEnding = 0; path = ASCollectionViewTests.mm; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objc; };
 		9F98C0231DBDF2A300476D92 /* ASControlTargetAction.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ASControlTargetAction.h; sourceTree = "<group>"; };
 		9F98C0241DBDF2A300476D92 /* ASControlTargetAction.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = ASControlTargetAction.mm; sourceTree = "<group>"; };
+		A1657E9924977CC6008099B1 /* ZAReallocOperation.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ZAReallocOperation.h; sourceTree = "<group>"; };
+		A1657E9C24978045008099B1 /* ZAReallocOperation.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ZAReallocOperation.m; sourceTree = "<group>"; };
 		A2763D771CBDD57D00A9ADBD /* ASPINRemoteImageDownloader.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ASPINRemoteImageDownloader.h; path = Details/ASPINRemoteImageDownloader.h; sourceTree = "<group>"; };
 		A2763D781CBDD57D00A9ADBD /* ASPINRemoteImageDownloader.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = ASPINRemoteImageDownloader.mm; path = Details/ASPINRemoteImageDownloader.mm; sourceTree = "<group>"; };
 		A32FEDD31C501B6A004F642A /* ASTextKitFontSizeAdjuster.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ASTextKitFontSizeAdjuster.h; path = TextKit/ASTextKitFontSizeAdjuster.h; sourceTree = "<group>"; };
@@ -1642,6 +1646,8 @@
 				E5B077FE1E69F4EB00C24B5B /* ASElementMap.mm */,
 				AC6145401D8AFAE8003D62A2 /* ASSection.h */,
 				AC6145421D8AFD4F003D62A2 /* ASSection.mm */,
+				A1657E9924977CC6008099B1 /* ZAReallocOperation.h */,
+				A1657E9C24978045008099B1 /* ZAReallocOperation.m */,
 			);
 			name = "Data Controller";
 			sourceTree = "<group>";
@@ -2013,6 +2019,7 @@
 				E5775AFC1F13CE9F00CAC9BC /* _ASCollectionGalleryLayoutItem.h in Headers */,
 				E5855DF01EBB4D83003639AE /* ASCollectionLayoutDefines.h in Headers */,
 				E5B5B9D11E9BAD9800A6B726 /* ASCollectionLayoutContext+Private.h in Headers */,
+				A1657E9E24978119008099B1 /* ZAReallocOperation.h in Headers */,
 				9C8898BD1C738BB800D6B02E /* ASTextKitFontSizeAdjuster.h in Headers */,
 				254C6B791BF94DF4003EC431 /* ASTextKitEntityAttribute.h in Headers */,
 				CC3B20841C3F76D600798563 /* ASPendingStateController.h in Headers */,
@@ -2201,6 +2208,7 @@
 			developmentRegion = English;
 			hasScannedForEncodings = 0;
 			knownRegions = (
+				English,
 				en,
 				Base,
 			);
@@ -2467,6 +2475,7 @@
 				AC6145441D8AFD4F003D62A2 /* ASSection.mm in Sources */,
 				E5775AFE1F13CF7400CAC9BC /* _ASCollectionGalleryLayoutItem.mm in Sources */,
 				34EFC75E1B701BF000AD841F /* ASInternalHelpers.mm in Sources */,
+				A1657E9D24978045008099B1 /* ZAReallocOperation.m in Sources */,
 				34EFC7681B701CDE00AD841F /* ASLayout.mm in Sources */,
 				DECBD6EA1BE56E1900CF4905 /* ASButtonNode.mm in Sources */,
 				CCCCCCE01EC3EF060087FE10 /* ASTextRunDelegate.mm in Sources */,

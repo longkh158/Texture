@@ -31,6 +31,21 @@ AS_SUBCLASSING_RESTRICTED
                        owningNode:(id<ASRangeManagingNode>)owningNode
                   traitCollection:(ASPrimitiveTraitCollection)traitCollection;
 
+#if ZA_ENABLE_MAINTAIN_RANGE
+/// Deallocates a node if it falls out of maintain range.
+- (void)deallocateNode;
+
+/// Reacquires a node block, used in case when a node is about to be reallocated.
+/// This will ask the data source to prepare a node block, if and only if one isn't
+/// there yet.
+/// @param nodeBlock A node block for a collection cell. Cannot be nil.
+- (void)reacquireNodeBlockIfNeeded:(ASCellNodeBlock)nodeBlock;
+
+/// Checks if an element's node has been deallocted (for example, when it fell out of maintain range).
+@property (atomic, readonly, getter=isNodeDeallocated) BOOL nodeDeallocated;
+
+#endif
+
 /**
  * @return The node, running the node block if necessary. The node block will be discarded
  * after the first time it is run.

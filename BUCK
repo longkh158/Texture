@@ -167,7 +167,7 @@ apple_test(
     # ASTextNodePerformanceTests are excluded (#2173)
     excludes = ['Tests/ASTextNodePerformanceTests.m*']
   ),
-  snapshot_reference_images_path='Tests/ReferenceImages',
+  snapshot_reference_images_path='Tests/ReferenceImages_64',
   preprocessor_flags = COMMON_PREPROCESSOR_FLAGS + [
     '-Wno-implicit-function-declaration',
     '-Wno-deprecated-declarations',

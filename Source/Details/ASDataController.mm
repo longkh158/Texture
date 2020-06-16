@@ -36,6 +36,10 @@
 #import <AsyncDisplayKit/ASDisplayNode+Subclasses.h>
 #import <AsyncDisplayKit/NSIndexSet+ASHelpers.h>
 
+#if ZA_ENABLE_MAINTAIN_RANGE
+#import <AsyncDisplayKit/ZAReallocOperation.h>
+#endif
+
 //#define LOG(...) NSLog(__VA_ARGS__)
 #define LOG(...)
 
@@ -65,6 +69,11 @@ typedef void (^ASDataControllerSynchronizationBlock)();
   dispatch_group_t _editingTransactionGroup;  // Group of all edit transaction blocks. Useful for waiting.
   std::atomic<int> _editingTransactionGroupCount;
   
+#if ZA_ENABLE_MAINTAIN_RANGE
+  dispatch_queue_t _maintainOperationQueue; // Maintain range operation queue.
+  dispatch_queue_t _editingMaintainQueue; // Serial background queue. Dispatches maintain range alloc/realloc operations.
+#endif
+  
   BOOL _initialReloadDataHasBeenCalled;
 
   BOOL _synchronized;
@@ -82,6 +91,12 @@ typedef void (^ASDataControllerSynchronizationBlock)();
 
 @property (copy) ASElementMap *pendingMap;
 @property (copy) ASElementMap *visibleMap;
+
+#if ZA_ENABLE_MAINTAIN_RANGE
+/// Operation queue to reallocate previously evicted nodes.
+@property (nonatomic) NSOperationQueue *reallocOperationQueue;
+@property NSHashTable<ZAReallocOperation *> *currentReallocOperations;
+#endif
 @end
 
 @implementation ASDataController
@@ -117,10 +132,27 @@ typedef void (^ASDataControllerSynchronizationBlock)();
   _synchronized = YES;
   _onDidFinishSynchronizingBlocks = [[NSMutableSet alloc] init];
   
-  const char *queueName = [[NSString stringWithFormat:@"org.AsyncDisplayKit.ASDataController.editingTransactionQueue:%p", self] cStringUsingEncoding:NSASCIIStringEncoding];
+  const char *queueName = [[NSString stringWithFormat:@"org.AsyncDisplayKit.ASDataController.editingTransactionQueue:%p", self]
+                           cStringUsingEncoding:NSASCIIStringEncoding];
   _editingTransactionQueue = dispatch_queue_create(queueName, DISPATCH_QUEUE_SERIAL);
   dispatch_queue_set_specific(_editingTransactionQueue, &kASDataControllerEditingQueueKey, &kASDataControllerEditingQueueContext, NULL);
   _editingTransactionGroup = dispatch_group_create();
+  
+#if ZA_ENABLE_MAINTAIN_RANGE
+  const char *maintainOperationQueueName = [[NSString stringWithFormat:@"vn.com.zalo.ZaloKit.ASDataController.maintainQueue:%p", (void *) self]
+                                            cStringUsingEncoding:NSASCIIStringEncoding];
+  _maintainOperationQueue = dispatch_queue_create(maintainOperationQueueName, DISPATCH_QUEUE_CONCURRENT);
+  
+  const char *editingMaintainQueueName = [[NSString stringWithFormat:@"vn.com.zalo.ZaloKit.ASDataController.editingQueue:%p", (void *) self]
+                                          cStringUsingEncoding:NSASCIIStringEncoding];
+  _editingMaintainQueue = dispatch_queue_create(editingMaintainQueueName, DISPATCH_QUEUE_SERIAL);
+  
+  self.reallocOperationQueue = [[NSOperationQueue alloc] init];
+  self.reallocOperationQueue.maxConcurrentOperationCount = [NSProcessInfo processInfo].activeProcessorCount * 2;
+  self.reallocOperationQueue.qualityOfService = NSQualityOfServiceUtility;
+  
+  self.currentReallocOperations = [[NSHashTable alloc] initWithOptions:NSHashTableWeakMemory capacity:0];
+#endif
   
   return self;
 }
@@ -139,6 +171,11 @@ typedef void (^ASDataControllerSynchronizationBlock)();
   }
 }
 
+- (void)dealloc {
+  [self.reallocOperationQueue cancelAllOperations];
+  [self.currentReallocOperations removeAllObjects];
+}
+
 #pragma mark - Cell Layout
 
 - (void)_allocateNodesFromElements:(NSArray<ASCollectionElement *> *)elements
@@ -150,12 +187,12 @@ typedef void (^ASDataControllerSynchronizationBlock)();
   if (nodeCount == 0 || weakDataSource == nil) {
     return;
   }
-
+  
   ASSignpostStart(ASSignpostDataControllerBatch);
-
+  
   {
     as_activity_create_for_scope("Data controller batch");
-
+    
     dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
     NSUInteger threadCount = 0;
     if ([_dataSource dataControllerShouldSerializeNodeCreation:self]) {
@@ -166,7 +203,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
       if (strongDataSource == nil) {
         return;
       }
-
+      
       unowned ASCollectionElement *element = elements[i];
       unowned ASCellNode *node = element.node;
       // Layout the node if the size range is valid.
@@ -176,9 +213,69 @@ typedef void (^ASDataControllerSynchronizationBlock)();
       }
     });
   }
-
+  
   ASSignpostEndCustom(ASSignpostDataControllerBatch, self, 0, (weakDataSource != nil ? ASSignpostColorDefault : ASSignpostColorRed));
 }
+
+#if ZA_ENABLE_MAINTAIN_RANGE
+- (void)_allocateNodesFromElements:(NSArray<ASCollectionElement *> *)elements deleteNodesOutsideMaintainRange:(BOOL)shouldDelete
+{
+  ASSERT_ON_EDITING_QUEUE;
+  
+  NSUInteger nodeCount = elements.count;
+  __weak id<ASDataControllerSource> weakDataSource = _dataSource;
+  __weak __typeof__(self) weakSelf = self;
+  if (nodeCount == 0 || weakDataSource == nil) {
+    return;
+  }
+  
+  ASSignpostStart(ASSignpostDataControllerBatch);
+  
+  {
+    as_activity_create_for_scope("Data controller batch");
+    
+    dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+    NSUInteger threadCount = 0;
+    if ([_dataSource dataControllerShouldSerializeNodeCreation:self]) {
+      threadCount = 1;
+    }
+    ASDispatchApply(nodeCount, queue, threadCount, ^(size_t i) {
+      __strong id<ASDataControllerSource> strongDataSource = weakDataSource;
+      if (strongDataSource == nil) {
+        return;
+      }
+      
+      unowned ASCollectionElement *element = elements[i];
+      unowned ASCellNode *node = element.nodeIfAllocated;
+      
+      if (node && shouldDelete) {
+        __strong __typeof__(weakSelf) strongSelf = weakSelf;
+        BOOL isElementInMaintainRange = YES;
+        if (strongSelf != nil &&
+            [strongSelf.delegate respondsToSelector:@selector(dataController:shouldMaintainElement:)]) {
+          isElementInMaintainRange = [strongSelf.delegate dataController:self shouldMaintainElement:element];
+        }
+        if (!isElementInMaintainRange &&
+            [element respondsToSelector:@selector(deallocateNode)]) {
+          as_log_verbose(ASCollectionLog(), "Will deallocate node for element %@", element);
+          [element deallocateNode];
+        }
+      } else {
+        node = element.node;
+        // Layout the node if the size range is valid.
+        ASSizeRange sizeRange = element.constrainedSize;
+        if (ASSizeRangeHasSignificantArea(sizeRange)) {
+          [self _layoutNode:node withConstrainedSize:sizeRange];
+        }
+      }
+    });
+  }
+  
+  ASSignpostEndCustom(ASSignpostDataControllerBatch, self, 0, (weakDataSource != nil ? ASSignpostColorDefault : ASSignpostColorRed));
+}
+#else
+// TODO: Place the previous method here
+#endif
 
 /**
  * Measure and layout the given node with the constrained size range.
@@ -190,7 +287,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
   }
   
   ASDisplayNodeAssert(ASSizeRangeHasSignificantArea(constrainedSize), @"Attempt to layout cell node with invalid size range %@", NSStringFromASSizeRange(constrainedSize));
-
+  
   CGRect frame = CGRectZero;
   frame.size = [node layoutThatFits:constrainedSize].size;
   node.frame = frame;
@@ -251,14 +348,14 @@ typedef void (^ASDataControllerSynchronizationBlock)();
                                  previousMap:(ASElementMap *)previousMap
 {
   ASDisplayNodeAssertMainThread();
-
+  
   if (indexPaths.count ==  0) {
     return;
   }
-
+  
   // Remove all old supplementaries from these sections
   NSIndexSet *oldSections = [NSIndexSet as_sectionsFromIndexPaths:indexPaths];
-
+  
   // Add in new ones with the new kinds.
   NSIndexSet *newSections;
   if (indexPathsAreNew) {
@@ -268,7 +365,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
       return [changeSet newSectionForOldSection:oldSection];
     }];
   }
-
+  
   for (NSString *kind in [self supplementaryKindsInSections:newSections]) {
     [self _insertElementsIntoMap:map kind:kind forSections:newSections traitCollection:traitCollection shouldFetchSizeRanges:shouldFetchSizeRanges changeSet:changeSet previousMap:previousMap];
   }
@@ -311,7 +408,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
           [indexPathsToInsertForKind addObject:indexPath];
         }
       }
-
+      
       [map removeSupplementaryElementsAtIndexPaths:indexPathsToDeleteForKind kind:kind];
       [self _insertElementsIntoMap:map kind:kind atIndexPaths:indexPathsToInsertForKind traitCollection:traitCollection shouldFetchSizeRanges:shouldFetchSizeRanges changeSet:nil previousMap:previousMap];
     }
@@ -403,7 +500,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
     } else {
       nodeBlock = [dataSource dataController:self supplementaryNodeBlockOfKind:kind atIndexPath:indexPath shouldAsyncLayout:&shouldAsyncLayout];
     }
-
+    
     ASSizeRange constrainedSize = ASSizeRangeUnconstrained;
     if (shouldFetchSizeRanges) {
       constrainedSize = [self constrainedSizeForNodeOfKind:kind atIndexPath:indexPath];
@@ -533,9 +630,9 @@ typedef void (^ASDataControllerSynchronizationBlock)();
 - (void)updateWithChangeSet:(_ASHierarchyChangeSet *)changeSet
 {
   ASDisplayNodeAssertMainThread();
-
+  
   _synchronized = NO;
-
+  
   [changeSet addCompletionHandler:^(BOOL finished) {
     _synchronized = YES;
     [self onDidFinishProcessingUpdates:^{
@@ -601,13 +698,13 @@ typedef void (^ASDataControllerSynchronizationBlock)();
       @throw e;
     }
   }
-
+  
   BOOL canDelegate = (self.layoutDelegate != nil);
   ASElementMap *newMap;
   ASCollectionLayoutContext *layoutContext;
   {
     as_activity_scope(as_activity_create("Latch new data for collection update", changeSet.rootActivity, OS_ACTIVITY_FLAG_DEFAULT));
-
+    
     // Step 1: Populate a new map that reflects the data source's state and use it as pendingMap
     ASElementMap *previousMap = self.pendingMap;
     if (changeSet.isEmpty) {
@@ -616,31 +713,31 @@ typedef void (^ASDataControllerSynchronizationBlock)();
     } else {
       // Mutable copy of current data.
       ASMutableElementMap *mutableMap = [previousMap mutableCopy];
-
+      
       // Step 1.1: Update the mutable copies to match the data source's state
       [self _updateSectionsInMap:mutableMap changeSet:changeSet];
       ASPrimitiveTraitCollection existingTraitCollection = [self.node primitiveTraitCollection];
       [self _updateElementsInMap:mutableMap changeSet:changeSet traitCollection:existingTraitCollection shouldFetchSizeRanges:(! canDelegate) previousMap:previousMap];
-
+      
       // Step 1.2: Clone the new data
       newMap = [mutableMap copy];
     }
     self.pendingMap = newMap;
-
+    
     // Step 2: Ask layout delegate for contexts
     if (canDelegate) {
       layoutContext = [self.layoutDelegate layoutContextWithElements:newMap];
     }
   }
-
+  
   as_log_debug(ASCollectionLog(), "New content: %@", newMap.smallDescription);
-
+  
   Class<ASDataControllerLayoutDelegate> layoutDelegateClass = [self.layoutDelegate class];
   ++_editingTransactionGroupCount;
   dispatch_group_async(_editingTransactionGroup, _editingTransactionQueue, ^{
     __block __unused os_activity_scope_state_s preparationScope = {}; // unused if deployment target < iOS10
     as_activity_scope_enter(as_activity_create("Prepare nodes for collection update", AS_ACTIVITY_CURRENT, OS_ACTIVITY_FLAG_DEFAULT), &preparationScope);
-
+    
     // Step 3: Call the layout delegate if possible. Otherwise, allocate and layout all elements
     if (canDelegate) {
       [layoutDelegateClass calculateLayoutWithContext:layoutContext];
@@ -658,7 +755,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
       }
       [self _allocateNodesFromElements:elementsToProcess];
     }
-
+    
     // Step 4: Inform the delegate on main thread
     [_mainSerialQueue performBlockOnMainThread:^{
       as_activity_scope_leave(&preparationScope);
@@ -675,7 +772,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
     }];
     --_editingTransactionGroupCount;
   });
-
+  
   // We've now dispatched node allocation and layout to a concurrent background queue.
   // In some cases, it's advantageous to prevent the main thread from returning, to ensure the next
   // frame displayed to the user has the view updates in place. Doing this does slightly reduce
@@ -717,7 +814,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
 - (void)_insertSectionsIntoMap:(ASMutableElementMap *)map indexes:(NSIndexSet *)sectionIndexes
 {
   ASDisplayNodeAssertMainThread();
-
+  
   [sectionIndexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL * _Nonnull stop) {
     id<ASSectionContext> context;
     if (_dataSourceFlags.contextForSection) {
@@ -739,7 +836,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
                  previousMap:(ASElementMap *)previousMap
 {
   ASDisplayNodeAssertMainThread();
-
+  
   if (changeSet.includesReloadData) {
     [map removeAllElements];
     
@@ -754,7 +851,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
   
   // Migrate old supplementary nodes to their new index paths.
   [map migrateSupplementaryElementsWithSectionMapping:changeSet.sectionMapping];
-
+  
   for (_ASHierarchyItemChange *change in [changeSet itemChangesOfType:_ASHierarchyChangeTypeDelete]) {
     [map removeItemsAtIndexPaths:change.indexPaths];
     // Aggressively repopulate supplementary nodes (#1773 & #1629)
@@ -765,7 +862,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
                          shouldFetchSizeRanges:shouldFetchSizeRanges
                                    previousMap:previousMap];
   }
-
+  
   for (_ASHierarchySectionChange *change in [changeSet sectionChangesOfType:_ASHierarchyChangeTypeDelete]) {
     NSIndexSet *sectionIndexes = change.indexSet;
     [map removeSectionsOfItems:sectionIndexes];
@@ -799,11 +896,11 @@ typedef void (^ASDataControllerSynchronizationBlock)();
   if (sectionIndexes.count == 0 || _dataSource == nil) {
     return;
   }
-
+  
   // Items
   [map insertEmptySectionsOfItemsAtIndexes:sectionIndexes];
   [self _insertElementsIntoMap:map kind:ASDataControllerRowNodeKind forSections:sectionIndexes traitCollection:traitCollection shouldFetchSizeRanges:shouldFetchSizeRanges changeSet:changeSet previousMap:previousMap];
-
+  
   // Supplementaries
   for (NSString *kind in [self supplementaryKindsInSections:sectionIndexes]) {
     // Step 2: Populate new elements for all sections
@@ -835,11 +932,11 @@ typedef void (^ASDataControllerSynchronizationBlock)();
     if (indexPathInPendingMap == nil || [visibleMap indexPathForElement:element] == nil) {
       continue;
     }
-
+    
     NSString *kind = element.supplementaryElementKind ?: ASDataControllerRowNodeKind;
     ASSizeRange constrainedSize = [self constrainedSizeForNodeOfKind:kind atIndexPath:indexPathInPendingMap];
     [self _layoutNode:node withConstrainedSize:constrainedSize];
-
+    
     BOOL matchesSize = [dataSource dataController:self presentedSizeForElement:element matchesSize:node.frame.size];
     if (! matchesSize) {
       [nodesSizesChanged addObject:node];
@@ -875,7 +972,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
   // Aggressively repopulate all supplemtary elements
   // Assuming this method is run on the main serial queue, _pending and _visible maps are synced and can be manipulated directly.
   ASDisplayNodeAssert(_visibleMap == _pendingMap, @"Expected visible and pending maps to be synchronized: %@", self);
-
+  
   ASMutableElementMap *newMap = [_pendingMap mutableCopy];
   [self _updateSupplementaryNodesIntoMap:newMap
                          traitCollection:[self.node primitiveTraitCollection]
@@ -883,20 +980,20 @@ typedef void (^ASDataControllerSynchronizationBlock)();
                              previousMap:_pendingMap];
   _pendingMap = [newMap copy];
   _visibleMap = _pendingMap;
-
+  
   for (ASCollectionElement *element in _visibleMap) {
     // Ignore this element if it is no longer in the latest data. It is still recognized in the UIKit world but will be deleted soon.
     NSIndexPath *indexPathInPendingMap = [_pendingMap indexPathForElement:element];
     if (indexPathInPendingMap == nil) {
       continue;
     }
-
+    
     NSString *kind = element.supplementaryElementKind ?: ASDataControllerRowNodeKind;
     ASSizeRange newConstrainedSize = [self constrainedSizeForNodeOfKind:kind atIndexPath:indexPathInPendingMap];
-
+    
     if (ASSizeRangeHasSignificantArea(newConstrainedSize)) {
       element.constrainedSize = newConstrainedSize;
-
+      
       // Node may not be allocated yet (e.g node virtualization or same size optimization)
       // Call context.nodeIfAllocated here to avoid premature node allocation and layout
       ASCellNode *node = element.nodeIfAllocated;
@@ -915,7 +1012,7 @@ typedef void (^ASDataControllerSynchronizationBlock)();
     if (!_initialReloadDataHasBeenCalled) {
       return;
     }
-
+    
     // Can't update the trait collection right away because _visibleMap may not be up-to-date,
     // i.e there might be some elements that were allocated using the old trait collection but haven't been added to _visibleMap
     [self _scheduleBlockOnMainSerialQueue:^{
@@ -935,6 +1032,76 @@ typedef void (^ASDataControllerSynchronizationBlock)();
     self.visibleMap = self.pendingMap = [[ASElementMap alloc] init];
   }
 }
+
+#if ZA_ENABLE_MAINTAIN_RANGE
+#pragma mark - Maintain Range Internals
+- (void)updateMaintainStateForEnterElements:(NSHashTable<ASCollectionElement *> *)enterElements
+                               exitElements:(NSHashTable<ASCollectionElement *> *)exitElements
+{
+  ASDisplayNodeAssertMainThread();
+  __weak __typeof__(self) weakSelf = self;
+  dispatch_async(_editingMaintainQueue, ^{
+    [self _cancelPreviousDeallocOperationsOutOfRange];
+    if (exitElements.count > 0) {
+      auto exitSet = ASSetByFlatMapping(exitElements, ASCollectionElement *e, e.nodeIfAllocated ? e : nil);
+      for (ASCollectionElement *e in exitSet) {
+        BOOL shouldMaintain = NO;
+        if ([weakSelf.delegate respondsToSelector:@selector(dataController:shouldMaintainElement:)]) {
+          shouldMaintain = [weakSelf.delegate dataController:self shouldMaintainElement:e];
+        }
+        if (!shouldMaintain) {
+          as_log_verbose(ASCollectionLog(), "Will deallocate node of element %@", e);
+          [e deallocateNode];
+        }
+      }
+    }
+    
+    if (enterElements.count > 0) {
+      auto enterSet = ASSetByFlatMapping(enterElements, ASCollectionElement *e, e.nodeIfAllocated ? nil : e);
+      ZAReallocOperation *op = [[ZAReallocOperation alloc] initWithElements:enterSet];
+      __weak __typeof__(op) weakOp = op;
+      for (__block ASCollectionElement *e in op.elements) {
+        if (op.isCancelled) break;
+        [op addExecutionBlock:^{
+          __strong __typeof__(weakOp) strongOp = weakOp;
+          BOOL shouldAsyncLayout = YES;
+          NSIndexPath *indexPath = [_pendingMap indexPathForElementIfCell:e];
+          auto nodeBlock = [_dataSource dataController:self nodeBlockAtIndexPath:indexPath shouldAsyncLayout:&shouldAsyncLayout];
+          [e reacquireNodeBlockIfNeeded:nodeBlock];
+          unowned ASCellNode *node = e.node;
+          // Layout the node if the size range is valid.
+          ASSizeRange sizeRange = e.constrainedSize;
+          if (ASSizeRangeHasSignificantArea(sizeRange) && shouldAsyncLayout) {
+            [self _layoutNode:node withConstrainedSize:sizeRange];
+          }
+          dispatch_barrier_async(_maintainOperationQueue, ^{
+            [weakSelf.currentReallocOperations removeObject:strongOp];
+          });
+        }];
+      }
+      // Executes reallocations.
+      dispatch_barrier_async(_maintainOperationQueue, ^{
+        [weakSelf.currentReallocOperations addObject:op];
+      });
+      [weakSelf.reallocOperationQueue addOperation:op];
+    }
+  });
+}
+
+- (void)_cancelPreviousDeallocOperationsOutOfRange
+{
+  if (!self.currentReallocOperations) return;
+  for (ZAReallocOperation *op in self.currentReallocOperations) {
+    BOOL shouldMaintain = NO;
+    if ([self.delegate respondsToSelector:@selector(dataController:shouldMaintainElements:)]) {
+      shouldMaintain = [self.delegate dataController:self shouldMaintainElements:op.elements];
+    }
+    if (!shouldMaintain) {
+      [op cancel];
+    }
+  }
+}
+#endif
 
 # pragma mark - Helper methods
 

@@ -62,7 +62,15 @@ static NSInteger const ASLayoutRangeModeCount = 4;
 
 typedef NS_ENUM(NSInteger, ASLayoutRangeType) {
   ASLayoutRangeTypeDisplay,
-  ASLayoutRangeTypePreload
+  ASLayoutRangeTypePreload,
+#if ZA_ENABLE_MAINTAIN_RANGE
+  /// Maintain range enables deallocating nodes that fall out of it, in order to keep memory usage lower.
+  ASLayoutRangeTypeMaintain
+#endif
 };
 
+#if ZA_ENABLE_MAINTAIN_RANGE
+static NSInteger const ASLayoutRangeTypeCount = 3;
+#else
 static NSInteger const ASLayoutRangeTypeCount = 2;
+#endif

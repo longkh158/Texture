@@ -52,6 +52,12 @@
   NSUInteger _updateCountThisFrame;
   CADisplayLink *_displayLink;
 #endif
+  
+#if ZA_ENABLE_MAINTAIN_RANGE
+  NSHashTable<ASCollectionElement *> *_allPreviousMaintainElements;
+  /// Current elements in maintain range.
+  NSHashTable<ASCollectionElement *> *_currentMaintainElements;
+#endif
 }
 
 @end
@@ -79,6 +85,11 @@ static UIApplicationState __ApplicationState = UIApplicationStateActive;
 #if AS_RANGECONTROLLER_LOG_UPDATE_FREQ
   _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(_updateCountDisplayLinkDidFire)];
   [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+#endif
+  
+#if ZA_ENABLE_MAINTAIN_RANGE
+  _allPreviousMaintainElements = [[NSHashTable alloc] initWithOptions:NSHashTableObjectPointerPersonality capacity:0];
+  _currentMaintainElements = [[NSHashTable alloc] initWithOptions:NSHashTableObjectPointerPersonality capacity:0];
 #endif
   
   if (ASDisplayNode.shouldShowRangeDebugOverlay) {
@@ -261,6 +272,10 @@ static UIApplicationState __ApplicationState = UIApplicationStateActive;
                                                                                     rangeType:ASLayoutRangeTypePreload];
   ASRangeTuningParameters parametersDisplay = [_layoutController tuningParametersForRangeMode:rangeMode
                                                                                     rangeType:ASLayoutRangeTypeDisplay];
+#if ZA_ENABLE_MAINTAIN_RANGE
+  ASRangeTuningParameters parametersMaintain = [_layoutController tuningParametersForRangeMode:rangeMode
+                                                                                     rangeType:ASLayoutRangeTypeMaintain];
+#endif
 
   // Preload can express the ultra-low-memory state with 0, 0 returned for its tuningParameters above, and will match Visible.
   // However, in this rangeMode, Display is not supposed to contain *any* paths -- not even the visible bounds. TuningParameters can't express this.
@@ -274,9 +289,17 @@ static UIApplicationState __ApplicationState = UIApplicationStateActive;
 
   NSHashTable<ASCollectionElement *> *displayElements = nil;
   NSHashTable<ASCollectionElement *> *preloadElements = nil;
+  NSHashTable<ASCollectionElement *> *maintainElements = nil;
   
   if (optimizedLoadingOfBothRanges) {
-    [_layoutController allElementsForScrolling:scrollDirection rangeMode:rangeMode displaySet:&displayElements preloadSet:&preloadElements map:map];
+#if ZA_ENABLE_MAINTAIN_RANGE
+    [_layoutController allElementsForScrolling:scrollDirection rangeMode:rangeMode displaySet:&displayElements preloadSet:&preloadElements
+                                   maintainSet:&maintainElements map:map];
+    _currentMaintainElements = maintainElements;
+#else
+    [_layoutController allElementsForScrolling:scrollDirection rangeMode:rangeMode displaySet:&displayElements preloadSet:&preloadElements
+                                           map:map];
+#endif
   } else {
     if (emptyDisplayRange == YES) {
       displayElements = [NSHashTable hashTableWithOptions:NSHashTableObjectPointerPersonality];
@@ -295,7 +318,36 @@ static UIApplicationState __ApplicationState = UIApplicationStateActive;
     } else {
       preloadElements = [_layoutController elementsForScrolling:scrollDirection rangeMode:rangeMode rangeType:ASLayoutRangeTypePreload map:map];
     }
+    
+#if ZA_ENABLE_MAINTAIN_RANGE
+    BOOL equalPreloadMaintain = ASRangeTuningParametersEqualToRangeTuningParameters(parametersPreload, parametersMaintain);
+    if (equalPreloadMaintain) {
+      _currentMaintainElements = preloadElements;
+    } else if (equalDisplayPreload) {
+      _currentMaintainElements = displayElements;
+    } else if (equalPreloadVisible) {
+      _currentMaintainElements = visibleElements;
+    } else {
+      _currentMaintainElements = [_layoutController elementsForScrolling:scrollDirection rangeMode:rangeMode
+                                                               rangeType:ASLayoutRangeTypeMaintain map:map];
+    }
+#endif
   }
+  
+#if ZA_ENABLE_MAINTAIN_RANGE
+  NSHashTable<ASCollectionElement *> *exitElements = [_allPreviousMaintainElements copy];
+  [exitElements minusHashTable:_currentMaintainElements];
+  
+  NSHashTable<ASCollectionElement *> *enterElements = [_currentMaintainElements copy];
+  [enterElements minusHashTable:_allPreviousMaintainElements];
+  
+  _allPreviousMaintainElements = [_currentMaintainElements copy];
+  
+  // Informs delegate to update the maintain range.
+  if ([self.delegate respondsToSelector:@selector(rangeController:updateMaintainRangeWithEnterElements:exitElements:)]) {
+    [self.delegate rangeController:self updateMaintainRangeWithEnterElements:enterElements exitElements:exitElements];
+  }
+#endif
   
   // For now we are only interested in items. Filter-map out from element to item-index-path.
   NSSet<NSIndexPath *> *visibleIndexPaths = ASSetByFlatMapping(visibleElements, ASCollectionElement *element, [map indexPathForElementIfCell:element]);
@@ -516,6 +568,23 @@ static UIApplicationState __ApplicationState = UIApplicationStateActive;
   _rangeIsValid = NO;
   [_delegate rangeController:self updateWithChangeSet:changeSet updates:updates];
 }
+
+- (BOOL)dataController:(nonnull ASDataController *)dataController shouldMaintainElement:(nonnull ASCollectionElement *)element {
+  NSParameterAssert(element);
+  if (_currentMaintainElements && element) {
+    return [_currentMaintainElements containsObject:element];
+  }
+  return NO;
+}
+
+- (BOOL)dataController:(nonnull ASDataController *)dataController shouldMaintainElements:(nonnull NSHashTable<ASCollectionElement *> *)elements {
+  NSParameterAssert(elements);
+  if (_currentMaintainElements && elements) {
+    return [_currentMaintainElements intersectsHashTable:elements];
+  }
+  return NO;
+}
+
 
 #pragma mark - Memory Management
 

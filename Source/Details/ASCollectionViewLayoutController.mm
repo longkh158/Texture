@@ -97,6 +97,61 @@ typedef struct ASRangeGeometry ASRangeGeometry;
   return;
 }
 
+#if ZA_ENABLE_MAINTAIN_RANGE
+- (void)allElementsForScrolling:(ASScrollDirection)scrollDirection rangeMode:(ASLayoutRangeMode)rangeMode displaySet:(NSHashTable<ASCollectionElement *> * _Nullable __autoreleasing *)displaySet preloadSet:(NSHashTable<ASCollectionElement *> * _Nullable __autoreleasing *)preloadSet maintainSet:(NSHashTable<ASCollectionElement *> * _Nullable __autoreleasing *)maintainSet map:(ASElementMap *)map
+{
+  if (displaySet == nullptr || preloadSet == nullptr || maintainSet == nullptr) {
+    return;
+  }
+  
+  ASRangeTuningParameters displayParams = [self tuningParametersForRangeMode:rangeMode rangeType:ASLayoutRangeTypeDisplay];
+  ASRangeTuningParameters preloadParams = [self tuningParametersForRangeMode:rangeMode rangeType:ASLayoutRangeTypePreload];
+  ASRangeTuningParameters maintainParams = [self tuningParametersForRangeMode:rangeMode rangeType:ASLayoutRangeTypeMaintain];
+  CGRect displayBounds = [self rangeBoundsWithScrollDirection:scrollDirection rangeTuningParameters:displayParams];
+  CGRect preloadBounds = [self rangeBoundsWithScrollDirection:scrollDirection rangeTuningParameters:preloadParams];
+  CGRect maintainBounds = [self rangeBoundsWithScrollDirection:scrollDirection rangeTuningParameters:maintainParams];
+  
+  CGRect unionBounds = CGRectUnion(CGRectUnion(displayBounds, preloadBounds), maintainBounds);
+  NSArray *layoutAttributes = [_collectionViewLayout layoutAttributesForElementsInRect:unionBounds];
+  NSInteger count = layoutAttributes.count;
+
+  __auto_type display = [[NSHashTable<ASCollectionElement *> alloc] initWithOptions:NSHashTableObjectPointerPersonality capacity:count];
+  __auto_type preload = [[NSHashTable<ASCollectionElement *> alloc] initWithOptions:NSHashTableObjectPointerPersonality capacity:count];
+  __auto_type maintain = [[NSHashTable<ASCollectionElement *> alloc] initWithOptions:NSHashTableObjectPointerPersonality capacity:count];
+
+  for (UICollectionViewLayoutAttributes *la in layoutAttributes) {
+    // Manually filter out elements that don't intersect the range bounds.
+    // See comment in elementsForItemsWithinRangeBounds:
+    // This is re-implemented here so that the iteration over layoutAttributes can be done once to check both ranges.
+    CGRect frame = la.frame;
+    BOOL intersectsDisplay = CGRectIntersectsRect(displayBounds, frame);
+    BOOL intersectsPreload = CGRectIntersectsRect(preloadBounds, frame);
+    BOOL intersectsMaintain = CGRectIntersectsRect(maintainBounds, frame);
+    if (intersectsDisplay == NO && intersectsPreload == NO && intersectsMaintain == NO && CATransform3DIsIdentity(la.transform3D) == YES) {
+      // Questionable why the element would be included here, but it doesn't belong.
+      continue;
+    }
+    
+    // Avoid excessive retains and releases, as well as property calls. We know the element is kept alive by map.
+    __unsafe_unretained ASCollectionElement *e = [map elementForLayoutAttributes:la];
+    if (e != nil && intersectsDisplay) {
+      [display addObject:e];
+    }
+    if (e != nil && intersectsPreload) {
+      [preload addObject:e];
+    }
+    if (e != nil && intersectsMaintain) {
+      [maintain addObject:e];
+    }
+  }
+
+  *displaySet = display;
+  *preloadSet = preload;
+  *maintainSet = maintain;
+  return;
+}
+#endif
+
 - (NSHashTable<ASCollectionElement *> *)elementsWithinRangeBounds:(CGRect)rangeBounds map:(ASElementMap *)map
 {
   NSArray *layoutAttributes = [_collectionViewLayout layoutAttributesForElementsInRect:rangeBounds];

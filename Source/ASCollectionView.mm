@@ -2294,6 +2294,10 @@ static NSString * const kReuseIdentifier = @"_ASCollectionReuseIdentifier";
   });
 }
 
+- (void)rangeController:(ASRangeController *)rangeController updateMaintainRangeWithEnterElements:(NSHashTable<ASCollectionElement *> *)enterElements exitElements:(NSHashTable<ASCollectionElement *> *)exitElements {
+  [_dataController updateMaintainStateForEnterElements:enterElements exitElements:exitElements];
+}
+
 #pragma mark - ASCellNodeDelegate
 
 - (void)nodeSelectedStateDidChange:(ASCellNode *)node

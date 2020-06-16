@@ -78,6 +78,10 @@
 # define AS_SAVE_EVENT_BACKTRACES 0
 #endif
 
+#ifndef ZA_ENABLE_MAINTAIN_RANGE
+#define ZA_ENABLE_MAINTAIN_RANGE 1
+#endif
+
 #ifndef __has_feature      // Optional.
 #define __has_feature(x) 0 // Compatibility with non-clang compilers.
 #endif

@@ -332,8 +332,8 @@ ASLayoutElementStyleExtensibilityForwarding
   as_log_verbose(ASLayoutLog(), "Node %@, bounds size %@, calculatedSize %@, calculatedIsDirty %d",
                  self,
                  NSStringFromCGSize(boundsSizeForLayout),
-                 NSStringFromCGSize(_calculatedDisplayNodeLayout->layout.size),
-                 _calculatedDisplayNodeLayout->version < _layoutVersion);
+                 NSStringFromCGSize(_calculatedDisplayNodeLayout.layout.size),
+                 _calculatedDisplayNodeLayout.version < _layoutVersion);
   // _calculatedDisplayNodeLayout is not reusable we need to transition to a new one
   [self cancelLayoutTransition];
 
@@ -357,9 +357,9 @@ ASLayoutElementStyleExtensibilityForwarding
   } else if (!nextLayout.isValid(_layoutVersion)) {
     as_log_verbose(ASLayoutLog(), "Pending layout is stale.");
   } else if (layoutSizeDifferentFromBounds) {
-    as_log_verbose(ASLayoutLog(), "Pending layout size %@ doesn't match bounds size.", NSStringFromCGSize(nextLayout->layout.size));
+    as_log_verbose(ASLayoutLog(), "Pending layout size %@ doesn't match bounds size.", NSStringFromCGSize(nextLayout.layout.size));
   } else {
-    as_log_verbose(ASLayoutLog(), "Using pending layout %@.", nextLayout->layout);
+    as_log_verbose(ASLayoutLog(), "Using pending layout %@.", nextLayout.layout);
     pendingLayoutApplicable = YES;
   }
 

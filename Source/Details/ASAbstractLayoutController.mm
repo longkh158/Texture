@@ -182,4 +182,16 @@ CGRect CGRectExpandToRangeWithScrollableDirections(CGRect rect, ASRangeTuningPar
   ASDisplayNodeAssertNotSupported();
 }
 
+#if ZA_ENABLE_MAINTAIN_RANGE
+- (void)allElementsForScrolling:(ASScrollDirection)scrollDirection
+                      rangeMode:(ASLayoutRangeMode)rangeMode
+                     displaySet:(NSHashTable<ASCollectionElement *> *__autoreleasing * _Nullable)displaySet
+                     preloadSet:(NSHashTable<ASCollectionElement *> *__autoreleasing * _Nullable)preloadSet
+                    maintainSet:(NSHashTable<ASCollectionElement *> *__autoreleasing * _Nullable)maintainSet
+                            map:(ASElementMap *)map
+{
+  ASDisplayNodeAssertNotSupported();
+}
+#endif
+
 @end

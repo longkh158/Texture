@@ -162,6 +162,10 @@ AS_SUBCLASSING_RESTRICTED
 
 - (BOOL)rangeControllerShouldUpdateRanges:(ASRangeController *)rangeController;
 
+#if ZA_ENABLE_MAINTAIN_RANGE
+- (void)rangeController:(ASRangeController *)rangeController updateMaintainRangeWithEnterElements:(NSHashTable<ASCollectionElement *> *)enterElements exitElements:(NSHashTable<ASCollectionElement *> *)exitElements;
+#endif
+
 @end
 
 @interface ASRangeController (ASRangeControllerUpdateRangeProtocol) <ASRangeControllerUpdateRangeProtocol>

@@ -125,6 +125,16 @@ AS_EXTERN NSString * const ASCollectionInvalidUpdateException;
  */
 - (void)dataController:(ASDataController *)dataController updateWithChangeSet:(_ASHierarchyChangeSet *)changeSet updates:(dispatch_block_t)updates;
 
+/// Asks the delegate if the element is to be maintained or it will be deallocated in the next update.
+/// @param dataController Sender
+/// @param element The @c ASCollectionElement to check.
+- (BOOL)dataController:(ASDataController *)dataController shouldMaintainElement:(ASCollectionElement *)element;
+
+/// Asks the delegate if the elements is to be maintained or it will be deallocated in the next update.
+/// @param dataController Sender
+/// @param element The @c ASCollectionElement hash table to check.
+- (BOOL)dataController:(ASDataController *)dataController shouldMaintainElements:(NSHashTable<ASCollectionElement *> *)element;
+
 @end
 
 @protocol ASDataControllerLayoutDelegate <NSObject>
@@ -283,6 +293,16 @@ AS_EXTERN NSString * const ASCollectionInvalidUpdateException;
  * Reset visibleMap and pendingMap when asyncDataSource and asyncDelegate of collection view become nil.
  */
 - (void)clearData;
+
+#if ZA_ENABLE_MAINTAIN_RANGE
+/// Asks the data controller to update the state of elements that fall into/out of maintain range.
+/// It is up to the data controller how to handle this event.
+/// The default implementation will deallocates exit elements, and reallocates enter elements.
+/// @param enterElements Elements that enter maintain range.
+/// @param exitElements Elements that exit maintain range.
+- (void)updateMaintainStateForEnterElements:(NSHashTable<ASCollectionElement *> *)enterElements
+                               exitElements:(NSHashTable<ASCollectionElement *> *)exitElements;
+#endif
 
 @end
 
